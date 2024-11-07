@@ -2,15 +2,18 @@ import hashlib
 import datetime as date
 
 class Block:
-    def __init__(self, index, timestamp, data, previous_hash="0", nonce=0, hash=""):
+    def __init__(self, index, timestamp, data, previous_hash, nonce=0, hash=None):
         self.index = index
         self.timestamp = timestamp
         self.data = data
         self.previous_hash = previous_hash
         self.nonce = nonce
-        self.hash = hash or self.calculate_hash()  # Calculate if not provided
+        self.hash = hash if hash else self.calculate_hash()
 
     def calculate_hash(self):
-        data = (str(self.index) + str(self.data) + str(self.timestamp) +
-                str(self.previous_hash) + str(self.nonce)).encode('utf-8')
-        return hashlib.sha256(data).hexdigest()
+        return hashlib.sha256(
+            (str(self.index) + self.timestamp + self.data + self.previous_hash + str(self.nonce)).encode('utf-8')
+        ).hexdigest()
+
+
+

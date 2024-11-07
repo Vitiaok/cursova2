@@ -1,6 +1,7 @@
 import socket
 import threading
 from chain import Chain
+from block import Block
 
 class Node:
     def __init__(self, host, port):
@@ -46,26 +47,3 @@ if __name__ == "__main__":
 
     # Інтерфейс користувача для створення блоку
     node.user_interface()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
