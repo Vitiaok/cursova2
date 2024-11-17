@@ -1,3 +1,4 @@
+# block.py
 import hashlib
 import datetime as date
 
@@ -15,5 +16,13 @@ class Block:
             (str(self.index) + self.timestamp + self.data + self.previous_hash + str(self.nonce)).encode('utf-8')
         ).hexdigest()
 
-
-
+    @property
+    def dict(self):
+        return {
+            'index': self.index,
+            'timestamp': self.timestamp,
+            'data': self.data,
+            'previous_hash': self.previous_hash,
+            'nonce': self.nonce,
+            'hash': self.hash
+        }

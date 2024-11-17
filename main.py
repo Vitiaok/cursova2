@@ -1,27 +1,18 @@
-from chain import Chain
-
-def main():
-    blockchain = Chain()
-    print("Blockchain initialized. Press 1 to add a block.")
-
-    while True:
-        pressedButton = int(input("Enter 1 to add a block: "))
-        if pressedButton == 1:
-            data = input("Enter data for the block: ")
-            blockchain.addBlock(data)
-            print("Block added.")
-
+from config import NetworkConfig
+from node import Node
+# main.py
 if __name__ == "__main__":
-    main()
-
-
-
-
-
+    import sys
     
-
-
-    
-
-
-
+    if len(sys.argv) != 2:
+        print("Usage: python main.py <node_id>")
+        print("Available nodes:", list(NetworkConfig.NODES.keys()))
+        sys.exit(1)
+        
+    node_id = sys.argv[1]
+    if node_id not in NetworkConfig.NODES:
+        print(f"Invalid node_id. Available nodes: {list(NetworkConfig.NODES.keys())}")
+        sys.exit(1)
+        
+    node = Node(node_id)
+    node.start()
