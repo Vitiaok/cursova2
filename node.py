@@ -1,4 +1,3 @@
-# node.py
 import socket
 import threading
 import json
@@ -6,17 +5,46 @@ from chain import Chain
 from block import Block
 from config import NetworkConfig
 import time
+from keys import generate_and_save_keys, sign_data, validate_signature
+import os
+from cryptography.hazmat.primitives import serialization
 
 class Node:
     def __init__(self, node_id):
         self.node_id = node_id
+        generate_and_save_keys(self.node_id)
         self.host, self.port = NetworkConfig.NODES[node_id]
         self.chain = Chain()
         self.peers = NetworkConfig.get_peers(node_id)
         self.running = True
 
-    import time
+    def load_private_key(self):
+        """Завантажує приватний ключ з файлу."""
+        private_key_path = f"private_key_{self.node_id}.pem"
+        
+        if not os.path.exists(private_key_path):
+            raise FileNotFoundError(f"Private key file {private_key_path} not found.")
 
+        with open(private_key_path, "rb") as key_file:
+            private_key = serialization.load_pem_private_key(
+                key_file.read(),
+                password=None,  # Якщо ключ захищений паролем, передайте його тут
+            )
+        
+        return private_key
+    
+    def load_public_key(self):
+        """Завантажує публічний ключ з файлу."""
+        public_key_path = f"public_key_{self.node_id}.pem"
+        
+        if not os.path.exists(public_key_path):
+            raise FileNotFoundError(f"Public key file {public_key_path} not found.")
+
+        with open(public_key_path, "rb") as key_file:
+            public_key = key_file.read()
+        
+        return public_key
+    
     def broadcast_block_for_validation(self, block):
         """Відправляє блок на валідацію всім пірам."""
         block_data = json.dumps({
@@ -48,27 +76,23 @@ class Node:
                     print("Retrying in 5 seconds...")
                     time.sleep(5)  # Затримка перед наступною спробою
 
-
-        
-
     def handle_client(self, client_socket, addr):
         """Обробляє вхідні з'єднання."""
         try:
             data = client_socket.recv(4096).decode('utf-8')
             message = json.loads(data)
-            
+
             if message['type'] == 'validate_block':
                 block = Block(**message['block'])
                 validator_id = message['validator']
-                
+
                 if self.chain.validate_block(block, validator_id):
                     response = {'type': 'validation_success', 'block_hash': block.hash}
-                    
                 else:
                     response = {'type': 'validation_failed', 'block_hash': block.hash}
-                    
+
                 client_socket.sendall(json.dumps(response).encode('utf-8'))
-                
+
         except Exception as e:
             print(f"Error handling client {addr}: {e}")
         finally:
@@ -92,38 +116,53 @@ class Node:
 
     def create_and_broadcast_block(self, data):
         """Створює новий блок та відправляє його на валідацію."""
-        new_block = self.chain.create_block(data)
+        # Отримуємо приватний ключ
+        private_key = self.load_private_key()
+        new_block = self.chain.create_block(data, private_key)
+    
+        # Підписуємо хеш блоку
+        signature = sign_data(private_key, new_block.hash)
+        
+        new_block.signature = signature
+
         self.broadcast_block_for_validation(new_block)
-       
+
 
     def user_interface(self):
         """Інтерфейс користувача для взаємодії з нодою."""
         while self.running:
-            command = input("\nEnter command (n: new block, c: show chain, q: quit): ").strip().lower()
-            
+            command = input("\nEnter command (n: new block, c: show chain, v: validate signature, q: quit): ").strip().lower()
+
             if command == 'n':
                 data = input("Enter data for the new block: ")
                 self.create_and_broadcast_block(data)
-            
+
             elif command == 'c':
-                #self.chain.remove_block_by_index(3)
+                for block in self.chain.get_chain():
+                    print(json.dumps(block.dict, indent=2))
+
+            elif command == 'v':
+                block_hash = input("Enter block hash to validate signature: ")
+                block = self.chain.get_block_by_hash(block_hash)
+                if block:
+                    public_key = self.load_public_key()
                 
-                chain = self.chain.get_chain()
-                print("\nCurrent Blockchain:")
-                for block in chain:
-                    print(f"\nBlock #{block.index}")
-                    print(f"Timestamp: {block.timestamp}")
-                    print(f"Data: {block.data}")
-                    print(f"Hash: {block.hash}")
-                    print(f"Previous Hash: {block.previous_hash}")
-            
+                    
+                
+                    # Перевіряємо підпис, використовуючи хеш блоку як дані
+                    if validate_signature(public_key, block.hash, block.signature):
+                        print("Signature is valid!")
+                    else:
+                        print("Invalid signature!")
+                else:
+                    print("Block not found.")
+                
             elif command == 'q':
-                print("Shutting down...")
                 self.running = False
-                break
-            
+                print("Shutting down node.")
             else:
-                print("Invalid command. Please use 'n' for new block, 'c' to show chain, or 'q' to quit.")
+                print("Invalid command. Try again.")
+
 
     def start(self):
         """Запускає ноду."""
