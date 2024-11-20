@@ -13,7 +13,7 @@ def generate_and_save_keys(node_id):
         print(f"Keys already exist for node {node_id}. Skipping key generation.")
         return
 
-    # Генерація приватного ключа RSA
+   
     private_key = rsa.generate_private_key(
         public_exponent=65537,
         key_size=2048,
@@ -66,37 +66,3 @@ def sign_data(private_key, data):
     
     return base64.b64encode(signature).decode('utf-8')
 
-def validate_signature(public_key_pem, data, signature):
-    """Функція для валідації підпису."""
-    try:
-        # Завантажуємо публічний ключ з PEM формату
-        public_key = serialization.load_pem_public_key(public_key_pem)
-        
-        # Декодуємо base64 підпис назад у байти
-        if isinstance(signature, str):
-            signature_bytes = base64.b64decode(signature)
-        else:
-            signature_bytes = signature
-        
-        
-        
-        # Перевіряємо підпис
-        public_key.verify(
-            signature_bytes,  # Підпис, який потрібно перевірити
-            data.encode('utf-8'),  # Дані для перевірки
-            padding.PKCS1v15(),  # Алгоритм паддінгу
-            hashes.SHA256()  # Хеш-функція
-        )
-        return True  # Якщо підпис є дійсним
-
-    except InvalidSignature as e:
-        print("Invalid Signature Error:")
-        print(f"Error details: {e}")
-        traceback.print_exc()
-        return False
-    except Exception as e:
-        # Якщо підпис не проходить перевірку
-        print("Signature Validation Failed:")
-        print(f"Unexpected error: {e}")
-        traceback.print_exc()
-        return False

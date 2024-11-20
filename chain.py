@@ -4,6 +4,12 @@ import threading
 import datetime as date
 from block import Block
 from keys import sign_data  # Імпортуємо функцію для підпису даних
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives import hashes
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import serialization
+import base64
+
 
 HASH_TARGET = "00000"
 BLOCKCHAIN_FILE = "blockchain.json"
@@ -57,11 +63,48 @@ class Chain:
             block.hash = block.calculate_hash()
         return block.hash
 
+    def validate_block_signature(self, block, validator_id):
+        """Перевіряє підпис блоку."""
+        try:
+            # Завантажуємо публічний ключ валідатора
+            public_key_path = f"public_key_{validator_id}.pem"
+            with open(public_key_path, "rb") as key_file:
+                public_key = serialization.load_pem_public_key(
+                    key_file.read()
+                )
+
+            # Декодуємо підпис з base64 назад у bytes
+            signature_bytes = base64.b64decode(block.signature)
+
+            # Перевіряємо підпис
+            try:
+                public_key.verify(
+                    signature_bytes,
+                    block.hash.encode('utf-8'),
+                    padding.PKCS1v15(),
+                    hashes.SHA256()
+                )
+                return True
+            except InvalidSignature:
+                print(f"Invalid signature for block from validator {validator_id}")
+                return False
+
+        except Exception as e:
+            print(f"Error validating signature: {e}")
+            return False
+
     def validate_block(self, block, validator_id):
         """Валідація блоку від іншої ноди."""
         block_id = block.hash
 
+        # Спочатку перевіряємо базову валідність блоку
         if not self.is_valid_block(block):
+            print("Block failed basic validation")
+            return False
+
+        # Перевіряємо підпис блоку
+        if not self.validate_block_signature(block, validator_id):
+            print("Block signature validation failed")
             return False
 
         with self.lock:
@@ -70,16 +113,41 @@ class Chain:
                 self.validations[block_id] = set()
 
             self.validations[block_id].add(validator_id)
-            print(self.validations[block_id])
+            print(f"Current validations for block {block_id}: {self.validations[block_id]}")
+            
             if len(self.validations[block_id]) >= REQUIRED_VALIDATIONS:
                 self.add_validated_block(block)
-                print(1)
+                print(f"Block {block_id} has been validated and added to the chain")
                 del self.pending_blocks[block_id]
                 del self.validations[block_id]
-
                 return True
 
         return False
+
+    def is_valid_block(self, block):
+        """Перевіряє валідність блоку."""
+        # Перевірка попереднього хешу
+        if len(self.blockchain) > 0:
+            if block.previous_hash != self.blockchain[-1].hash:
+                print("Previous hash does not match")
+                return False
+
+        # Перевірка правильності хешу
+        if block.hash != block.calculate_hash():
+            print("Hash calculation mismatch")
+            return False
+
+        # Перевірка цільового хешу (proof of work)
+        if block.hash[:len(HASH_TARGET)] != HASH_TARGET:
+            print("Hash does not meet target difficulty")
+            return False
+
+        # Перевірка наявності підпису
+        if block.signature is None:
+            print("Block has no signature")
+            return False
+
+        return True
 
     def add_validated_block(self, block):
         """Додає валідований блок до ланцюга."""
@@ -87,23 +155,6 @@ class Chain:
             self.blockchain.append(block)
         self.save_chain()
 
-    def is_valid_block(self, block):
-        """Перевіряє валідність блоку."""
-        if len(self.blockchain) > 0:
-            if block.previous_hash != self.blockchain[-1].hash:
-                return False
-
-        if block.hash != block.calculate_hash():
-            return False
-
-        if block.hash[:len(HASH_TARGET)] != HASH_TARGET:
-            return False
-
-        # Перевірка підпису блоку
-        if block.signature is None:
-            return False
-
-        return True
 
     def save_chain(self):
         """Зберігає блокчейн у файл."""
