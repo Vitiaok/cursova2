@@ -65,4 +65,3 @@ def sign_data(private_key, data):
     
     
     return base64.b64encode(signature).decode('utf-8')
-

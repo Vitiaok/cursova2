@@ -167,22 +167,7 @@ class Chain:
         try:
             with open(BLOCKCHAIN_FILE, 'r') as f:
                 chain_data = json.load(f)
-            
-                # Оновлена версія створення блоків
-                self.blockchain = []
-                for block_data in chain_data:
-                    # Видаляємо ключ 'data', якщо він є
-                    block_data.pop('data', None)
-                
-                    # Перевіряємо наявність файлових даних
-                    if 'file_data' not in block_data:
-                        block_data['file_data'] = None
-                    if 'file_path' not in block_data:
-                        block_data['file_path'] = None
-                
-                    # Створюємо блок з оновленими параметрами
-                    new_block = Block(**block_data)
-                    self.blockchain.append(new_block)
+                self.blockchain = [Block(**block) for block in chain_data]
 
                 # Перевірка на відсутні блоки або неправильні хеші
                 for i in range(1, len(self.blockchain)):
@@ -190,7 +175,7 @@ class Chain:
                         print(f"Error: Block {i} has incorrect previous hash.")
                         break
 
-                print("Blockchain loaded successfully.")
+            print("Blockchain loaded successfully.")
         except (FileNotFoundError, json.JSONDecodeError) as e:
             print("No blockchain found or corrupted blockchain file, starting fresh.")
 
