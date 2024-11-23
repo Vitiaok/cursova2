@@ -1,6 +1,6 @@
 from config import NetworkConfig
 from node import Node
-# main.py
+
 if __name__ == "__main__":
     import sys
     

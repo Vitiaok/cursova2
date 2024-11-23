@@ -9,6 +9,7 @@ from keys import generate_and_save_keys, sign_data
 import os
 from cryptography.hazmat.primitives import serialization
 from Files import FileHandler
+HASH_TARGET = "00000"
 
 class Node:
     def __init__(self, node_id):
@@ -19,6 +20,7 @@ class Node:
         self.peers = NetworkConfig.get_peers(node_id)
         self.running = True
         self.file_handler = FileHandler(self)
+        self.force_sync_required = False
 
     def load_private_key(self):
         private_key_path = f"private_key_{self.node_id}.pem"
@@ -57,16 +59,14 @@ class Node:
             message = json.loads(data)
 
             if message['type'] == 'validate_block':
-                if message['type'] == 'validate_block':
-                    block = Block(**message['block'])
-                    validator_id = message['validator']  
-
+                block = Block(**message['block'])
+                validator_id = message['validator']
                 
                 if self.chain.validate_block(block, validator_id):
                     response = {
                         'type': 'validation_success',
                         'block_hash': block.hash,
-                        'validator': self.node_id  
+                        'validator': self.node_id
                     }
                 else:
                     response = {
@@ -74,11 +74,32 @@ class Node:
                         'block_hash': block.hash,
                         'validator': self.node_id
                     }
-
+                
                 client_socket.sendall(json.dumps(response).encode('utf-8'))
-                pass
+                
             elif message['type'] == 'file_transfer':
                 self.file_handler.receive_file(client_socket, message['metadata'])
+                
+            elif message['type'] == 'get_chain':
+                response = {
+                    'type': 'chain_data',
+                    'chain': self.chain.get_chain_snapshot()
+                }
+                client_socket.sendall(json.dumps(response).encode('utf-8'))
+                
+            elif message['type'] == 'get_block':
+                block_index = message['block_index']
+                if 0 <= block_index < len(self.chain.blockchain):
+                    response = {
+                        'type': 'block_data',
+                        'block': self.chain.blockchain[block_index].dict
+                    }
+                else:
+                    response = {
+                        'type': 'block_data',
+                        'block': None
+                    }
+                client_socket.sendall(json.dumps(response).encode('utf-8'))
                 
         except Exception as e:
             print(f"Error handling client {addr}: {e}")
@@ -122,18 +143,19 @@ class Node:
                     time.sleep(5)
 
     def start_server(self):
-        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server_socket.bind((self.host, self.port))
-        server_socket.listen(5)
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # Allow reuse of the address
+        self.server_socket.bind((self.host, self.port))
+        self.server_socket.listen(5)
         print(f"Server started on {self.host}:{self.port}")
 
         while self.running:
             try:
-                client_socket, addr = server_socket.accept()
+                client_socket, addr = self.server_socket.accept()
                 print(f"Connection from {addr} has been established!")
                 threading.Thread(target=self.handle_client, args=(client_socket, addr)).start()
             except Exception as e:
-                if self.running:  
+                if self.running:  # Avoid printing errors when shutting down
                     print(f"Server error: {e}")
 
     def create_and_broadcast_block(self, data):
@@ -150,34 +172,149 @@ class Node:
 
     def user_interface(self):
         while self.running:
-            command = input("\nEnter command (n: new block, f: send file, c: show chain, q: quit): ").strip().lower()
+            command = input("\nEnter command (f: send file, c: show chain, q: quit): ").strip().lower()
 
-            if command == 'n':
-                data = input("Enter data for the new block: ")
-                self.create_and_broadcast_block(data)
-            elif command == 'f':
+            if command == 'f':
                 file_path = input("Enter path to the file to send: ")
                 self.file_handler.send_file(file_path)
             elif command == 'c':
                 for block in self.chain.get_chain():
                     print(json.dumps(block.dict, indent=2))
             elif command == 'q':
+                print("Shutting down node...")
                 self.running = False
-                print("Shutting down node.")
+
+                # Закриття сервера (звільнення порту)
+                if hasattr(self, 'server_socket') and self.server_socket:
+                    try:
+                        self.server_socket.close()
+                        print("Server socket closed successfully.")
+                    except Exception as e:
+                        print(f"Error closing server socket: {e}")
+
+                print("Node shutdown complete.")
             else:
                 print("Invalid command. Try again.")
 
 
+
     def start(self):
-       
         server_thread = threading.Thread(target=self.start_server)
         server_thread.daemon = True
         server_thread.start()
         
-       
+        # Запускаємо періодичну синхронізацію
+        self.start_periodic_sync()
+        
         try:
             self.user_interface()
         except KeyboardInterrupt:
             print("\nShutting down gracefully...")
         finally:
             self.running = False
+            
+    def sync_with_peers(self):
+        """Синхронізує стан блокчейну з пірами."""
+        is_valid, invalid_blocks = self.chain.verify_chain_integrity()
+        
+        if not is_valid:
+            print(f"Found invalid blocks: {invalid_blocks}")
+            
+            for invalid_block in invalid_blocks:
+                block_index = invalid_block['index']
+                print(f"Attempting to repair block at index {block_index}")
+                
+                # Запитуємо правильний блок у пірів
+                correct_block = self.request_block_from_peers(block_index)
+                print(correct_block)
+                if correct_block:
+                    # Виправляємо блок
+                    if self.chain.repair_block(block_index, correct_block):
+                        print(f"Successfully repaired block at index {block_index}")
+                    else:
+                        print(f"Failed to repair block at index {block_index}")
+                else:
+                    print(f"Could not obtain valid block from peers for index {block_index}")
+        
+        # Продовжуємо звичайну синхронізацію
+        for peer_host, peer_port in self.peers:
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.connect((peer_host, peer_port))
+                    
+                    request = {
+                        'type': 'get_chain',
+                        'node_id': self.node_id
+                    }
+                    s.sendall(json.dumps(request).encode('utf-8'))
+                    
+                    response = json.loads(s.recv(16384).decode('utf-8'))
+                    
+                    if response['type'] == 'chain_data':
+                        self.chain.resolve_conflicts(response['chain'])
+                        
+            except Exception as e:
+                print(f"Failed to sync with peer {peer_host}:{peer_port}: {e}")
+
+    def start_periodic_sync(self):
+        """Запускає періодичну синхронізацію з пірами."""
+        def sync_task():
+            while self.running:
+                try:
+                    self.sync_with_peers()
+                except Exception as e:
+                    print(f"Error during sync: {e}")
+                time.sleep(5)  # Синхронізація кожні 5 секунд
+                
+        sync_thread = threading.Thread(target=sync_task)
+        sync_thread.daemon = True
+        sync_thread.start()
+
+    def request_block_from_peers(self, block_index):
+        """Запитує конкретний блок у всіх пірів."""
+        for peer_host, peer_port in self.peers:
+            try:
+                
+                    
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    try:
+                        s.connect((peer_host, peer_port))
+                        print("Connected to peer:", peer_host, peer_port)
+                        
+                        request = {
+                            'type': 'get_block',
+                            'block_index': block_index,
+                            'node_id': self.node_id
+                        }
+                        s.sendall(json.dumps(request).encode('utf-8'))
+
+                        raw_response = s.recv(4096).decode('utf-8')
+                        try:
+                            response = json.loads(raw_response)
+                        except json.JSONDecodeError:
+                            print(f"Failed to decode JSON response from peer {peer_host}:{peer_port}")
+                            return None
+
+                        if response['type'] == 'block_data' and response.get('block'):
+                            print("Received block data:", response['block'])
+                            temp_block = Block(**response['block'])
+                            if (temp_block.hash[:len(HASH_TARGET)] == HASH_TARGET and 
+                                temp_block.hash == temp_block.calculate_hash()):
+                                return response['block']
+                            else:
+                                print("Block validation failed for block at index", block_index)
+                        else:
+                            print(f"No valid block data received from {peer_host}:{peer_port}")
+                    
+                    except socket.error as e:
+                        print(f"Socket error with peer {peer_host}:{peer_port}: {e}")
+                    except Exception as e:
+                        print(f"Unexpected error with peer {peer_host}:{peer_port}: {e}")
+
+                return None
+
+            except Exception as e:
+                print(f"Failed to get block from peer {peer_host}:{peer_port}: {e}")
+        
+        return None
+    

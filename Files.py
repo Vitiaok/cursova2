@@ -52,13 +52,8 @@ class FileHandler:
         
         if success:
             
-            file_data = {
-                "type": "file",
-                "file_hash": metadata["file_hash"],
-                "filename": metadata["filename"],
-                "timestamp": self.node.chain.blockchain[-1].timestamp if self.node.chain.blockchain else "0"
-            }
-            
+            file_data = metadata
+                
             
             self.node.create_and_broadcast_block(json.dumps(file_data))
             return True
