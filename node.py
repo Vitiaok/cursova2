@@ -9,15 +9,29 @@ from keys import generate_and_save_keys, sign_data
 import os
 from cryptography.hazmat.primitives import serialization
 from Files import FileHandler
+import struct
 HASH_TARGET = "00000"
+MULTICAST_GROUP = '224.0.0.1'  # Стандартна адреса мультикаст-групи
+MULTICAST_PORT = 5007          # Порт для мультикасту
+BUFFER_SIZE = 1024
 
 class Node:
     def __init__(self, node_id):
         self.node_id = node_id
         generate_and_save_keys(self.node_id)
-        self.host, self.port = NetworkConfig.NODES[node_id]
+        
+        # Get discovery port and host
+        self.discovery_host, self.discovery_port = NetworkConfig.get_node_info(node_id)
+        
+        # Calculate file transfer port
+        self.file_transfer_port = NetworkConfig._discovery.get_file_transfer_port(self.discovery_port)
+        
+        # Use file transfer port for main node operations
+        self.host = self.discovery_host
+        self.port = self.file_transfer_port
+        
         self.chain = Chain()
-        self.peers = NetworkConfig.get_peers(node_id)
+        self.peers = self._get_file_transfer_peers()
         self.running = True
         self.file_handler = FileHandler(self)
         self.force_sync_required = False
@@ -62,18 +76,29 @@ class Node:
                 block = Block(**message['block'])
                 validator_id = message['validator']
                 
-                if self.chain.validate_block(block, validator_id):
-                    response = {
-                        'type': 'validation_success',
-                        'block_hash': block.hash,
-                        'validator': self.node_id
-                    }
-                else:
+                # Check if block already exists in chain
+                if any(existing.hash == block.hash for existing in self.chain.blockchain):
+                    print(f"Block {block.hash} already exists in chain, skipping validation")
                     response = {
                         'type': 'validation_failed',
                         'block_hash': block.hash,
-                        'validator': self.node_id
+                        'validator': self.node_id,
+                        'reason': 'duplicate_block'
                     }
+                else:
+                    if self.chain.validate_block(block, validator_id):
+                        response = {
+                            'type': 'validation_success',
+                            'block_hash': block.hash,
+                            'validator': self.node_id
+                        }
+                    else:
+                        response = {
+                            'type': 'validation_failed',
+                            'block_hash': block.hash,
+                            'validator': self.node_id,
+                            'reason': 'validation_failed'
+                        }
                 
                 client_socket.sendall(json.dumps(response).encode('utf-8'))
                 
@@ -114,33 +139,48 @@ class Node:
             'block': block.dict,
             'validator': self.node_id 
         })
-    
+
         validation_responses = []
+        validated = False  # Flag to track if block was already validated and added
+        
         for peer_host, peer_port in self.peers:
+            if validated:  # Skip remaining peers if block was already validated
+                break
+                
             connected = False
-            while not connected:
+            retries = 3  # Limit retries to avoid infinite loop
+            
+            while not connected and retries > 0:
                 try:
                     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                         s.connect((peer_host, peer_port))
                         s.sendall(block_data.encode('utf-8'))
-
                         
                         response = json.loads(s.recv(4096).decode('utf-8'))
                         print(f"Validation response from {peer_host}:{peer_port}: {response}")
                         validation_responses.append(response)
-                    
-                    
-                        if all(res.get('type') == 'validation_success' for res in validation_responses):
-                            print("Block validated by all peers, adding to local chain.")
+                        
+                        # Check if we have enough validations
+                        successful_validations = sum(1 for res in validation_responses 
+                                                if res.get('type') == 'validation_success')
+                        
+                        # If we have majority of validations (>50% of peers)
+                        if not validated and successful_validations > len(self.peers) // 2:
+                            print("Block received majority validation, adding to local chain.")
                             self.chain.add_validated_block(block)
-                        else:
-                            print("Block validation failed. Not adding to local chain.")
+                            validated = True  # Mark as validated to avoid duplicate additions
+                        
                         connected = True
                     
                 except Exception as e:
                     print(f"Failed to send block to {peer_host}:{peer_port}: {e}")
-                    print("Retrying in 5 seconds...")
-                    time.sleep(5)
+                    print(f"Retries left: {retries}")
+                    retries -= 1
+                    if retries > 0:
+                        time.sleep(5)
+
+        if not validated:
+            print("Block validation failed: Could not get majority validation from peers.")
 
     def start_server(self):
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -199,19 +239,29 @@ class Node:
 
 
     def start(self):
+        # Потік для запуску сервера
         server_thread = threading.Thread(target=self.start_server)
         server_thread.daemon = True
         server_thread.start()
-        
-        # Запускаємо періодичну синхронізацію
+
+        # Потік для прослуховування мультикасту
+        multicast_listen_thread = threading.Thread(target=self.multicast_listen)
+        multicast_listen_thread.daemon = True
+        multicast_listen_thread.start()
+
+        # Після запуску сервера, починаємо надсилати оголошення
+        threading.Thread(target=self.periodic_multicast_announce, daemon=True).start()
+
+        # Періодична синхронізація з пірами
         self.start_periodic_sync()
-        
+
         try:
             self.user_interface()
         except KeyboardInterrupt:
             print("\nShutting down gracefully...")
         finally:
             self.running = False
+
             
     def sync_with_peers(self):
         """Синхронізує стан блокчейну з пірами."""
@@ -318,3 +368,88 @@ class Node:
         
         return None
     
+    def multicast_listen(self):
+        """Прослуховування мультикаст-групи для пошуку інших нод."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+        # Прив'язуємо сокет до всіх інтерфейсів і порту MULTICAST_PORT
+        sock.bind(('', MULTICAST_PORT))
+
+        # Додаємо сокет у мультикаст-групу
+        group = socket.inet_aton(MULTICAST_GROUP)
+        mreq = struct.pack('4sL', group, socket.INADDR_ANY)
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+
+        while self.running:
+            try:
+                data, address = sock.recvfrom(BUFFER_SIZE)
+                message = json.loads(data.decode('utf-8'))
+
+                if message['type'] == 'node_announcement':
+                    peer_host = address[0]
+                    peer_port = message['port']
+                    
+                    # Skip if this is our own announcement
+                    if (peer_host == self.host or 
+                        peer_host == 'localhost' or 
+                        peer_host == '127.0.0.1' or
+                        message['node_id'] == self.node_id):
+                        continue
+                    
+                    peer_info = (peer_host, peer_port)
+                    if peer_info not in self.peers:
+                        self.peers.append(peer_info)
+                        print(f"Found new peer: {peer_info}")
+                        
+            except Exception as e:
+                if self.running:  # Ігноруємо помилки при завершенні роботи
+                    print(f"Multicast listen error: {e}")
+        sock.close()
+
+    def multicast_announce(self):
+        """Відправлення повідомлення про свою доступність у мультикаст-групу."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
+
+        message = {
+            'type': 'node_announcement',
+            'node_id': self.node_id,
+            'host': self.host,
+            'port': self.port
+        }
+
+        try:
+            sock.sendto(json.dumps(message).encode('utf-8'), (MULTICAST_GROUP, MULTICAST_PORT))
+            print("Sent multicast announcement.")
+        except Exception as e:
+            print(f"Multicast announce error: {e}")
+        finally:
+            sock.close()
+
+    def periodic_multicast_announce(self):
+        """Періодичне надсилання мультикаст-оголошень."""
+        while self.running:
+            self.multicast_announce()
+            time.sleep(10)  # Відправляємо оголошення кожні 10 секунд
+
+    def _get_file_transfer_peers(self):
+        """Convert discovery peers to file transfer peers, excluding self"""
+        discovery_peers = NetworkConfig.get_peers(self.node_id)
+        
+        # Filter out own address by checking both host and node_id
+        filtered_peers = []
+        own_ip = NetworkConfig._discovery._get_my_ip()
+        
+        for host, port in discovery_peers:
+            # Skip if this is our own address
+            if host == own_ip or host == self.host or host == 'localhost' or host == '127.0.0.1':
+                print(f"Skipping own address: {host}:{port}")
+                continue
+            
+            # Convert discovery port to file transfer port
+            file_transfer_port = NetworkConfig._discovery.get_file_transfer_port(port)
+            filtered_peers.append((host, file_transfer_port))
+        
+        print(f"Filtered peers (excluding self): {filtered_peers}")
+        return filtered_peers

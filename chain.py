@@ -1,5 +1,4 @@
 import json
-import hashlib
 import threading
 import datetime as date
 from block import Block
