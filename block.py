@@ -14,15 +14,15 @@ class Block:
         self.signature = self._process_signature(signature)
 
     def _process_signature(self, signature):
-        """Safely process the signature regardless of input type"""
+       
         if signature is None:
             return None
         try:
             if isinstance(signature, bytes):
                 return base64.b64encode(signature).decode('utf-8')
             elif isinstance(signature, str):
-                # Validate that it's proper base64
-                base64.b64decode(signature)  # This will raise an error if invalid
+               
+                base64.b64decode(signature)  
                 return signature
             else:
                 return None
@@ -30,11 +30,11 @@ class Block:
             return None
 
     def calculate_hash(self):
-        """Calculate SHA256 hash of block data"""
+        
         data_string = (
             str(self.index) +
             self.timestamp +
-            json.dumps(self.data, sort_keys=True) +  # Ensure consistent JSON serialization
+            json.dumps(self.data, sort_keys=True) +  
             self.previous_hash +
             str(self.nonce)
         )
@@ -42,7 +42,7 @@ class Block:
 
     @property
     def dict(self) -> Dict[str, Any]:
-        """Return a JSON-serializable dictionary representation of the block"""
+        
         return {
             'index': self.index,
             'timestamp': self.timestamp,
@@ -55,7 +55,7 @@ class Block:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Block':
-        """Create a Block instance from a dictionary"""
+        
         return cls(
             index=data['index'],
             timestamp=data['timestamp'],
@@ -67,5 +67,5 @@ class Block:
         )
 
     def to_json(self) -> str:
-        """Convert block to JSON string with proper encoding"""
+        
         return json.dumps(self.dict, ensure_ascii=False)

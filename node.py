@@ -10,32 +10,26 @@ import os
 from cryptography.hazmat.primitives import serialization
 from Files import FileHandler
 import struct
+
 HASH_TARGET = "00000"
-MULTICAST_GROUP = '224.0.0.1'  # Стандартна адреса мультикаст-групи
-MULTICAST_PORT = 5007          # Порт для мультикасту
+MULTICAST_GROUP = '224.0.0.1'  
+MULTICAST_PORT = 5007          
 BUFFER_SIZE = 1024
 
 class Node:
     def __init__(self, node_id):
         self.node_id = node_id
         generate_and_save_keys(self.node_id)
-        
-        # Get discovery port and host
         self.discovery_host, self.discovery_port = NetworkConfig.get_node_info(node_id)
-        
-        # Calculate file transfer port
         self.file_transfer_port = NetworkConfig._discovery.get_file_transfer_port(self.discovery_port)
-        
-        # Use file transfer port for main node operations
         self.host = self.discovery_host
         self.port = self.file_transfer_port
-        
         self.chain = Chain()
         self.peers = self._get_file_transfer_peers()
         self.running = True
         self.file_handler = FileHandler(self)
         self.force_sync_required = False
-        self.peer_connections = {}  # Store persistent connections
+        self.peer_connections = {}  
         self.connection_lock = threading.Lock()
 
     def load_private_key(self):
@@ -78,7 +72,7 @@ class Node:
                 block = Block(**message['block'])
                 validator_id = message['validator']
                 
-                # Check if block already exists in chain
+                
                 if any(existing.hash == block.hash for existing in self.chain.blockchain):
                     print(f"Block {block.hash} already exists in chain, skipping validation")
                     response = {
@@ -143,14 +137,14 @@ class Node:
         })
 
         validation_responses = []
-        validated = False  # Flag to track if block was already validated and added
+        validated = False  
         
         for peer_host, peer_port in self.peers:
-            if validated:  # Skip remaining peers if block was already validated
+            if validated:  
                 break
                 
             connected = False
-            retries = 3  # Limit retries to avoid infinite loop
+            retries = 3  
             
             while not connected and retries > 0:
                 try:
@@ -162,15 +156,15 @@ class Node:
                         print(f"Validation response from {peer_host}:{peer_port}: {response}")
                         validation_responses.append(response)
                         
-                        # Check if we have enough validations
+                        
                         successful_validations = sum(1 for res in validation_responses 
                                                 if res.get('type') == 'validation_success')
                         
-                        # If we have majority of validations (>50% of peers)
+                        
                         if not validated and successful_validations > len(self.peers) // 2:
                             print("Block received majority validation, adding to local chain.")
                             self.chain.add_validated_block(block)
-                            validated = True  # Mark as validated to avoid duplicate additions
+                            validated = True  
                         
                         connected = True
                     
@@ -186,7 +180,7 @@ class Node:
 
     def start_server(self):
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # Allow reuse of the address
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  
         self.server_socket.bind((self.host, self.port))
         self.server_socket.listen(5)
         print(f"Server started on {self.host}:{self.port}")
@@ -226,7 +220,7 @@ class Node:
                 print("Shutting down node...")
                 self.running = False
 
-                # Закриття сервера (звільнення порту)
+                
                 if hasattr(self, 'server_socket') and self.server_socket:
                     try:
                         self.server_socket.close()
@@ -241,20 +235,17 @@ class Node:
 
 
     def start(self):
-        # Потік для запуску сервера
+        
         server_thread = threading.Thread(target=self.start_server)
         server_thread.daemon = True
         server_thread.start()
 
-        # Потік для прослуховування мультикасту
         multicast_listen_thread = threading.Thread(target=self.multicast_listen)
         multicast_listen_thread.daemon = True
         multicast_listen_thread.start()
         
-        # Після запуску сервера, починаємо надсилати оголошення
         threading.Thread(target=self.periodic_multicast_announce, daemon=True).start()
         
-        # Періодична синхронізація з пірами
         self.start_periodic_sync()
 
         try:
@@ -266,7 +257,7 @@ class Node:
 
             
     def sync_with_peers(self):
-        """Synchronize blockchain state with peers"""
+        
         is_valid, invalid_blocks = self.chain.verify_chain_integrity()
         
         if not is_valid:
@@ -279,8 +270,8 @@ class Node:
                 correct_block = self.request_block_from_peers(block_index)
                 if correct_block:
                     try:
-                        # Ensure the block data is properly serializable
-                        json.dumps(correct_block)  # Test serialization
+                        
+                        json.dumps(correct_block)  
                         if self.chain.repair_block(block_index, correct_block):
                             print(f"Successfully repaired block at index {block_index}")
                         else:
@@ -290,7 +281,7 @@ class Node:
                 else:
                     print(f"Could not obtain valid block from peers for index {block_index}")
         
-        # Continue with regular synchronization
+        
         for peer_host, peer_port in self.peers:
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -302,7 +293,7 @@ class Node:
                     }
                     s.sendall(json.dumps(request).encode('utf-8'))
                     
-                    # Implement proper chunked receiving for large responses
+                    
                     data = self.receive_all(s)
                     if data:
                         response = json.loads(data.decode('utf-8'))
@@ -313,21 +304,21 @@ class Node:
                 print(f"Failed to sync with peer {peer_host}:{peer_port}: {e}")
 
     def start_periodic_sync(self):
-        """Start periodic sync with longer interval"""
+        
         def sync_task():
             while self.running:
                 try:
                     self.sync_with_peers()
                 except Exception as e:
                     print(f"Error during sync: {e}")
-                time.sleep(30)  # Increased sync interval to 30 seconds
+                time.sleep(30) 
                 
         sync_thread = threading.Thread(target=sync_task)
         sync_thread.daemon = True
         sync_thread.start()
 
     def request_block_from_peers(self, block_index):
-        """Запитує конкретний блок у всіх пірів."""
+        
         for peer_host, peer_port in self.peers:
             try:
                 
@@ -375,14 +366,14 @@ class Node:
         return None
     
     def multicast_listen(self):
-        """Прослуховування мультикаст-групи для пошуку інших нод."""
+        
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-        # Прив'язуємо сокет до всіх інтерфейсів і порту MULTICAST_PORT
+        
         sock.bind(('', MULTICAST_PORT))
 
-        # Додаємо сокет у мультикаст-групу
+       
         group = socket.inet_aton(MULTICAST_GROUP)
         mreq = struct.pack('4sL', group, socket.INADDR_ANY)
         sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
@@ -396,7 +387,7 @@ class Node:
                     peer_host = address[0]
                     peer_port = message['port']
                     
-                    # Skip if this is our own announcement
+                 
                     if (peer_host == self.host or 
                         peer_host == 'localhost' or 
                         peer_host == '127.0.0.1' or
@@ -409,12 +400,12 @@ class Node:
                         print(f"Found new peer: {peer_info}")
                         
             except Exception as e:
-                if self.running:  # Ігноруємо помилки при завершенні роботи
+                if self.running:  
                     print(f"Multicast listen error: {e}")
         sock.close()
 
     def multicast_announce(self):
-        """Відправлення повідомлення про свою доступність у мультикаст-групу."""
+        
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
 
@@ -434,26 +425,26 @@ class Node:
             sock.close()
 
     def periodic_multicast_announce(self):
-        """Періодичне надсилання мультикаст-оголошень."""
+        
         while self.running:
             self.multicast_announce()
-            time.sleep(10)  # Відправляємо оголошення кожні 10 секунд
+            time.sleep(10)  
 
     def _get_file_transfer_peers(self):
-        """Convert discovery peers to file transfer peers, excluding self"""
+        
         discovery_peers = NetworkConfig.get_peers(self.node_id)
         
-        # Filter out own address by checking both host and node_id
+        
         filtered_peers = []
         own_ip = NetworkConfig._discovery._get_my_ip()
         
         for host, port in discovery_peers:
-            # Skip if this is our own address
+            
             if host == own_ip or host == self.host or host == 'localhost' or host == '127.0.0.1':
                 print(f"Skipping own address: {host}:{port}")
                 continue
             
-            # Convert discovery port to file transfer port
+            
             file_transfer_port = NetworkConfig._discovery.get_file_transfer_port(port)
             filtered_peers.append((host, file_transfer_port))
         
@@ -461,7 +452,7 @@ class Node:
         return filtered_peers
     
     def receive_all(self, sock, chunk_size=4096):
-        """Helper method to receive all data from socket"""
+        
         data = []
         while True:
             chunk = sock.recv(chunk_size)

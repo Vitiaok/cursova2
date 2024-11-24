@@ -9,7 +9,7 @@ from typing import Dict, Tuple
 class FileTransfer:
     CHUNK_SIZE = 8192
     FILE_STORAGE = "node_files"
-    TRANSFER_TIMEOUT = 60  # timeout in seconds
+    TRANSFER_TIMEOUT = 60  
 
     @staticmethod
     def calculate_file_hash(file_path):
@@ -46,13 +46,13 @@ class FileHandler:
                 print(f"Error: File {file_path} not found")
                 return False
 
-            # Create metadata
+            
             metadata = FileTransfer.create_file_metadata(file_path)
             print(f"Preparing to send file: {metadata['filename']}")
             print(f"File size: {metadata['file_size']} bytes")
             print(f"File hash: {metadata['file_hash']}")
 
-            # Get current peers
+           
             peers = self.node.peers
             if not peers:
                 print("No peers found to send file to")
@@ -60,7 +60,7 @@ class FileHandler:
 
             print(f"Found {len(peers)} peers to send file to")
             
-            # Broadcast file to all peers
+            
             success = self._broadcast_file(file_path, metadata)
             
             if success:
@@ -70,7 +70,7 @@ class FileHandler:
                     "transfer_status": "completed"
                 }
                 
-                # Create blockchain record
+                
                 self.node.create_and_broadcast_block(json.dumps(file_data))
                 print(f"File {metadata['filename']} successfully transferred and recorded in blockchain")
                 return True
@@ -93,7 +93,7 @@ class FileHandler:
                     s.settimeout(FileTransfer.TRANSFER_TIMEOUT)
                     s.connect((peer_host, peer_port))
                     
-                    # Send metadata first
+                    
                     metadata_msg = {
                         "type": "file_transfer",
                         "metadata": metadata,
@@ -102,8 +102,8 @@ class FileHandler:
                     s.sendall(json.dumps(metadata_msg).encode('utf-8'))
                     print(f"Sent metadata to {peer_host}:{peer_port}")
                     
-                    # Wait for ready signal with timeout
-                    s.settimeout(5)  # 5 seconds timeout for ready signal
+                    
+                    s.settimeout(5)  
                     try:
                         response = s.recv(1024).decode('utf-8')
                         if response != "ready":
@@ -113,10 +113,10 @@ class FileHandler:
                         print(f"Timeout waiting for ready signal from {peer_host}:{peer_port}")
                         continue
 
-                    # Reset timeout for file transfer
+                    
                     s.settimeout(FileTransfer.TRANSFER_TIMEOUT)
                     
-                    # Send file content
+                    
                     bytes_sent = 0
                     file_size = os.path.getsize(file_path)
                     with open(file_path, 'rb') as f:
@@ -154,10 +154,10 @@ class FileHandler:
             
             file_path = os.path.join(FileTransfer.FILE_STORAGE, filename)
             
-            # Send ready signal
+            
             client_socket.sendall("ready".encode('utf-8'))
             
-            # Receive file content
+            
             received_size = 0
             with open(file_path, 'wb') as f:
                 while received_size < file_size:

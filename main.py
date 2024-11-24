@@ -9,10 +9,10 @@ if __name__ == "__main__":
         
     node_id = sys.argv[1]
     
-    # Initialize network discovery
+    
     NetworkConfig.initialize(node_id)
     
-    # Small delay to allow initial discovery
+    
     import time
     time.sleep(2)
     
