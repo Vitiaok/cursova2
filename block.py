@@ -1,5 +1,7 @@
 import hashlib
 import base64
+import json
+from typing import Dict, Any
 
 class Block:
     def __init__(self, index, timestamp, data, previous_hash, nonce=0, hash=None, signature=None):
@@ -9,27 +11,38 @@ class Block:
         self.previous_hash = previous_hash
         self.nonce = nonce
         self.hash = hash if hash else self.calculate_hash()
-        
-        
-        if signature:
+        self.signature = self._process_signature(signature)
+
+    def _process_signature(self, signature):
+        """Safely process the signature regardless of input type"""
+        if signature is None:
+            return None
+        try:
             if isinstance(signature, bytes):
-                
-                self.signature = base64.b64encode(signature).decode('utf-8')
+                return base64.b64encode(signature).decode('utf-8')
             elif isinstance(signature, str):
-                
-                self.signature = signature
+                # Validate that it's proper base64
+                base64.b64decode(signature)  # This will raise an error if invalid
+                return signature
             else:
-                self.signature = None
-        else:
-            self.signature = None
+                return None
+        except Exception:
+            return None
 
     def calculate_hash(self):
-        return hashlib.sha256(
-            (str(self.index) + self.timestamp + self.data + self.previous_hash + str(self.nonce)).encode('utf-8')
-        ).hexdigest()
+        """Calculate SHA256 hash of block data"""
+        data_string = (
+            str(self.index) +
+            self.timestamp +
+            json.dumps(self.data, sort_keys=True) +  # Ensure consistent JSON serialization
+            self.previous_hash +
+            str(self.nonce)
+        )
+        return hashlib.sha256(data_string.encode('utf-8')).hexdigest()
 
     @property
-    def dict(self):
+    def dict(self) -> Dict[str, Any]:
+        """Return a JSON-serializable dictionary representation of the block"""
         return {
             'index': self.index,
             'timestamp': self.timestamp,
@@ -39,3 +52,20 @@ class Block:
             'hash': self.hash,
             'signature': self.signature
         }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'Block':
+        """Create a Block instance from a dictionary"""
+        return cls(
+            index=data['index'],
+            timestamp=data['timestamp'],
+            data=data['data'],
+            previous_hash=data['previous_hash'],
+            nonce=data['nonce'],
+            hash=data['hash'],
+            signature=data.get('signature')
+        )
+
+    def to_json(self) -> str:
+        """Convert block to JSON string with proper encoding"""
+        return json.dumps(self.dict, ensure_ascii=False)

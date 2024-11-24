@@ -23,20 +23,31 @@ class NetworkDiscovery:
             # Get all network interfaces
             interfaces = netifaces.interfaces()
             
+            
+            
+            # Перевірка для Wi-Fi інтерфейсу за його ID (відомий GUID)
+            for interface in interfaces:
+                if '5C95540C-4E12-4FAE-9079-F75B02D0AFC1' in interface:  # Перевірка ID Wi-Fi
+                    addrs = netifaces.ifaddresses(interface)
+                    if netifaces.AF_INET in addrs:
+                        for addr in addrs[netifaces.AF_INET]:
+                            ip = addr['addr']
+                            if not ip.startswith('127.'):  # Пропустити локальні адреси
+                                return ip
+
+            # Якщо Wi-Fi інтерфейс не знайдений, вибираємо інші можливі інтерфейси
             for interface in interfaces:
                 addrs = netifaces.ifaddresses(interface)
-                
-                # Look for IPv4 addresses
                 if netifaces.AF_INET in addrs:
                     for addr in addrs[netifaces.AF_INET]:
                         ip = addr['addr']
-                        # Skip localhost
-                        if not ip.startswith('127.'):
+                        if not ip.startswith('127.'):  # Пропуск локальних адрес
                             return ip
-                            
+                        
         except Exception as e:
             print(f"Error getting IP address: {e}")
             return socket.gethostbyname(socket.gethostname())
+
 
     def discover_nodes(self) -> Dict[str, Tuple[str, int]]:
         """Scan the network for other blockchain nodes."""
@@ -63,7 +74,7 @@ class NetworkDiscovery:
                     if response.get('type') == 'discovery_response':
                         node_id = response.get('node_id')
                         discovered_nodes[node_id] = (ip, port)
-                        print(f"Discovered node {node_id} at {ip}:{port}")
+                        
                         
             except (socket.timeout, ConnectionRefusedError):
                 pass
@@ -103,7 +114,7 @@ class NetworkDiscovery:
                 continue
         
         server_socket.listen(5)
-        print(f"Discovery server started on {self.my_ip}:{port}")
+        
 
         while self.running:
             try:

@@ -18,9 +18,6 @@ if __name__ == "__main__":
     
     node = Node(node_id)
     try:
-        print(f"Node started with:")
-        print(f"Discovery port: {node.discovery_port}")
-        print(f"File transfer port: {node.file_transfer_port}")
         node.start()
     except KeyboardInterrupt:
         print("\nShutting down node...")

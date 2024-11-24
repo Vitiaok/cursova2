@@ -174,7 +174,7 @@ class Chain:
                         print(f"Error: Block {i} has incorrect previous hash.")
                         break
 
-            print("Blockchain loaded successfully.")
+            
         except (FileNotFoundError, json.JSONDecodeError) as e:
             print("No blockchain found or corrupted blockchain file, starting fresh.")
 
@@ -315,3 +315,5 @@ class Chain:
             print("Chain has been force synchronized with peer data")
             return True
         return False
+    
+    

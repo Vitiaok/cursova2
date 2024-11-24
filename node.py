@@ -35,6 +35,8 @@ class Node:
         self.running = True
         self.file_handler = FileHandler(self)
         self.force_sync_required = False
+        self.peer_connections = {}  # Store persistent connections
+        self.connection_lock = threading.Lock()
 
     def load_private_key(self):
         private_key_path = f"private_key_{self.node_id}.pem"
@@ -192,10 +194,10 @@ class Node:
         while self.running:
             try:
                 client_socket, addr = self.server_socket.accept()
-                print(f"Connection from {addr} has been established!")
+                
                 threading.Thread(target=self.handle_client, args=(client_socket, addr)).start()
             except Exception as e:
-                if self.running:  # Avoid printing errors when shutting down
+                if self.running:  
                     print(f"Server error: {e}")
 
     def create_and_broadcast_block(self, data):
@@ -248,10 +250,10 @@ class Node:
         multicast_listen_thread = threading.Thread(target=self.multicast_listen)
         multicast_listen_thread.daemon = True
         multicast_listen_thread.start()
-
+        
         # Після запуску сервера, починаємо надсилати оголошення
         threading.Thread(target=self.periodic_multicast_announce, daemon=True).start()
-
+        
         # Періодична синхронізація з пірами
         self.start_periodic_sync()
 
@@ -264,7 +266,7 @@ class Node:
 
             
     def sync_with_peers(self):
-        """Синхронізує стан блокчейну з пірами."""
+        """Synchronize blockchain state with peers"""
         is_valid, invalid_blocks = self.chain.verify_chain_integrity()
         
         if not is_valid:
@@ -274,19 +276,21 @@ class Node:
                 block_index = invalid_block['index']
                 print(f"Attempting to repair block at index {block_index}")
                 
-                # Запитуємо правильний блок у пірів
                 correct_block = self.request_block_from_peers(block_index)
-                print(correct_block)
                 if correct_block:
-                    # Виправляємо блок
-                    if self.chain.repair_block(block_index, correct_block):
-                        print(f"Successfully repaired block at index {block_index}")
-                    else:
-                        print(f"Failed to repair block at index {block_index}")
+                    try:
+                        # Ensure the block data is properly serializable
+                        json.dumps(correct_block)  # Test serialization
+                        if self.chain.repair_block(block_index, correct_block):
+                            print(f"Successfully repaired block at index {block_index}")
+                        else:
+                            print(f"Failed to repair block at index {block_index}")
+                    except json.JSONDecodeError as e:
+                        print(f"Invalid JSON data in block: {e}")
                 else:
                     print(f"Could not obtain valid block from peers for index {block_index}")
         
-        # Продовжуємо звичайну синхронізацію
+        # Continue with regular synchronization
         for peer_host, peer_port in self.peers:
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -298,23 +302,25 @@ class Node:
                     }
                     s.sendall(json.dumps(request).encode('utf-8'))
                     
-                    response = json.loads(s.recv(16384).decode('utf-8'))
-                    
-                    if response['type'] == 'chain_data':
-                        self.chain.resolve_conflicts(response['chain'])
+                    # Implement proper chunked receiving for large responses
+                    data = self.receive_all(s)
+                    if data:
+                        response = json.loads(data.decode('utf-8'))
+                        if response['type'] == 'chain_data':
+                            self.chain.resolve_conflicts(response['chain'])
                         
             except Exception as e:
                 print(f"Failed to sync with peer {peer_host}:{peer_port}: {e}")
 
     def start_periodic_sync(self):
-        """Запускає періодичну синхронізацію з пірами."""
+        """Start periodic sync with longer interval"""
         def sync_task():
             while self.running:
                 try:
                     self.sync_with_peers()
                 except Exception as e:
                     print(f"Error during sync: {e}")
-                time.sleep(5)  # Синхронізація кожні 5 секунд
+                time.sleep(30)  # Increased sync interval to 30 seconds
                 
         sync_thread = threading.Thread(target=sync_task)
         sync_thread.daemon = True
@@ -421,7 +427,7 @@ class Node:
 
         try:
             sock.sendto(json.dumps(message).encode('utf-8'), (MULTICAST_GROUP, MULTICAST_PORT))
-            print("Sent multicast announcement.")
+
         except Exception as e:
             print(f"Multicast announce error: {e}")
         finally:
@@ -451,5 +457,15 @@ class Node:
             file_transfer_port = NetworkConfig._discovery.get_file_transfer_port(port)
             filtered_peers.append((host, file_transfer_port))
         
-        print(f"Filtered peers (excluding self): {filtered_peers}")
+        
         return filtered_peers
+    
+    def receive_all(self, sock, chunk_size=4096):
+        """Helper method to receive all data from socket"""
+        data = []
+        while True:
+            chunk = sock.recv(chunk_size)
+            if not chunk:
+                break
+            data.append(chunk)
+        return b''.join(data)
